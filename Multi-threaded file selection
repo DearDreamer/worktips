@@ -1,56 +1,108 @@
-import soundfile as sf
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from threading import Lock
+package 多线程;
 
-# 检查文件时长并返回需要的信息
-def check_duration_and_tag(line, found_tags, lock):
-    path, tag = line.strip().split('\t')
+import javax.sound.sampled.AudioFormat;
+import javax.sound.sampled.AudioInputStream;
+import javax.sound.sampled.AudioSystem;
+import java.io.File;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
-    # 如果已经找到该标签，直接返回
-    if tag in found_tags:
-        return None
+/**
+ * @Author wuyifan
+ * @Date 2024/4/19 11:03
+ * @Version 1.0
+ */
+public class ThreadChoiceWav {
 
-    try:
-        data, samplerate = sf.read(path)
-        duration = len(data) / samplerate
-        if duration > 3:
-            with lock:
-                # 再次检查以确保并行时没有冲突
-                if tag not in found_tags:
-                    found_tags.add(tag)  # 记录已找到的标签
-                    return path, tag
-    except Exception as e:
-        print(f"Error processing file {path}: {e}")
-    return None
+        static HashSet<String> foundTags = new HashSet<String>();
+        static List<String> results = new ArrayList<>();
 
-def main():
-    input_file = 'F:\Dataset\CN-Celeb\close_sv\\train.txt'
-    output_file = 'F:\Dataset\CN-Celeb\close_sv\\enroll1.txt'
-    results = []
-    found_tags = set()
-    lock = Lock()
+        public static void main(String[] args) {
+            String inputFilePath = "D:\\JAVA\\javacode\\JavaPoints\\多线程\\train.txt";
+            String outputFilePath = "D:\\JAVA\\javacode\\JavaPoints\\多线程\\enroll.txt";
 
-    lines = []
-    with open(input_file, 'r') as f:
-        lines = f.readlines()
+            // Read lines from input file
+            List<String> lines = new ArrayList<>();
+            try {
+                lines = Files.readAllLines(Paths.get(inputFilePath));
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
 
-    with ThreadPoolExecutor() as executor:
-        futures = []
-        for line in lines:
-            future = executor.submit(check_duration_and_tag, line, found_tags, lock)
-            futures.append(future)
+//          创建了一个固定大小的线程池，大小为10。这意味着同时最多可以有10个线程在运行。
+            ExecutorService executor = Executors.newFixedThreadPool(10);
+//            每一个Future对象代表着一个已提交至线程池的任务的结果
+            List<Future<String>> futures = new ArrayList<>();
 
-        for future in as_completed(futures):
-            result = future.result()
-            if result:
-                results.append(result)
+            for (String line : lines){
+                futures.add(executor.submit(() -> checkDurationAndTag(line)));
+            }
 
-    # 写入结果
-    with open(output_file, 'w') as f:
-        for path, tag in results:
-            f.write(f"{path}\t{tag}\n")
+            executor.shutdown();
 
+            try {
+                if (!executor.awaitTermination(60, TimeUnit.SECONDS)) {
+                    executor.shutdownNow();
+                }
+            } catch (InterruptedException e) {
+                executor.shutdownNow();
+            }
 
+//          从每个future中获取结果并添加到结果列表中
+            for (Future<String> future : futures) {
+                try {
+                    String result = future.get(); // 获取任务执行结果
+                    if (result != null) {
+                        results.add(result); // 添加有效结果到结果列表
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            }
 
-if __name__ == "__main__":
-    main()
+            // Write results to output file
+            try {
+                Files.write(Paths.get(outputFilePath), results);
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+
+        public static String checkDurationAndTag(String line){
+            String[] columns = line.trim().split("  ");
+            if (columns.length < 2) return null;
+            String path = columns[0];
+            String tag = columns[1];
+
+            synchronized (foundTags) {  // In case of check and update simultaneously in a multithread environment.
+                if (foundTags.contains(tag)) return null;
+            }
+
+            try {
+                File file = new File(path);
+                AudioInputStream audioInputStream = AudioSystem.getAudioInputStream(file);
+                AudioFormat format = audioInputStream.getFormat();
+                long frames = audioInputStream.getFrameLength();
+                double durationInSeconds = (frames+0.0) / format.getFrameRate();
+
+                if (durationInSeconds >= 0.1) {
+                    synchronized (foundTags) {
+                        if (!foundTags.contains(tag)) {
+                            foundTags.add(tag);
+                            return path + "\t" + tag;
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                System.out.println("Error processing file " + path + ": " + e.getMessage());
+            }
+            return null;
+        }
+}
