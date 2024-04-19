@@ -1,0 +1,56 @@
+import soundfile as sf
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from threading import Lock
+
+# 检查文件时长并返回需要的信息
+def check_duration_and_tag(line, found_tags, lock):
+    path, tag = line.strip().split('\t')
+
+    # 如果已经找到该标签，直接返回
+    if tag in found_tags:
+        return None
+
+    try:
+        data, samplerate = sf.read(path)
+        duration = len(data) / samplerate
+        if duration > 3:
+            with lock:
+                # 再次检查以确保并行时没有冲突
+                if tag not in found_tags:
+                    found_tags.add(tag)  # 记录已找到的标签
+                    return path, tag
+    except Exception as e:
+        print(f"Error processing file {path}: {e}")
+    return None
+
+def main():
+    input_file = 'F:\Dataset\CN-Celeb\close_sv\\train.txt'
+    output_file = 'F:\Dataset\CN-Celeb\close_sv\\enroll1.txt'
+    results = []
+    found_tags = set()
+    lock = Lock()
+
+    lines = []
+    with open(input_file, 'r') as f:
+        lines = f.readlines()
+
+    with ThreadPoolExecutor() as executor:
+        futures = []
+        for line in lines:
+            future = executor.submit(check_duration_and_tag, line, found_tags, lock)
+            futures.append(future)
+
+        for future in as_completed(futures):
+            result = future.result()
+            if result:
+                results.append(result)
+
+    # 写入结果
+    with open(output_file, 'w') as f:
+        for path, tag in results:
+            f.write(f"{path}\t{tag}\n")
+
+
+
+if __name__ == "__main__":
+    main()
